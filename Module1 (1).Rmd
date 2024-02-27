@@ -1,0 +1,287 @@
+---
+title: "Module1"
+author: "Rohit Kosamkar"
+date: "2024-02-27"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Data Set Source : https://data.cdc.gov/NCHS/Weekly-Provisional-Counts-of-Deaths-by-State-and-S/muzy-jte6/about_data
+
+Data Set Description: Provisional counts of deaths by the week the deaths occurred, by state of occurrence, and by select underlying causes of death for 2020-2023. The dataset also includes weekly provisional counts of death for COVID-19, coded to ICD-10 code U07.1 as an underlying or multiple cause of death.
+
+Time period covered by the data: 2020-2023
+
+Data Size: Rows:10476 Columns:35
+
+Important Columns Description:
+
+"Jurisdiction"            : Refers to the geographical region or jurisdiction where the data was collected.
+"septicemia"              : Refers to the number of deaths attributed to septicemia.
+"malignant_neoplasms"     : Indicates the number of deaths caused by malignant neoplasms (cancerous tumors).
+"diabetes_mellitus"       : Represents the number of deaths due to diabetes mellitus.
+"alzheimer_disease"       : Refers to the number of deaths attributed to Alzheimer's disease.
+"influenza_and_pneumonia" : Indicates the number of deaths from influenza and pneumonia.
+"chronic_respiratory"     : Represents the number of deaths caused by chronic respiratory diseases.
+"lab_findings"            : Represents the number of deaths due to abnormalities found in laboratory tests.
+"heart_disease"           : Indicates the number of deaths caused by heart disease.
+"cerebrovascular_diseases": Refers to the number of deaths attributed to cerebrovascular diseases (related to blood vessels in the brain.
+"covid_19_MCD"            : Represents the number of deaths with COVID-19 mentioned as the multiple cause of death (MCD).
+"covid_19_UCD"            : Indicates the number of deaths with COVID-19 mentioned as the underlying cause of death (UCD).
+
+
+Importing Important Libraries
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(janitor)
+library(zoo)
+library(gridExtra)
+library(tidyr)
+```
+
+```{r}
+print(getwd())
+setwd("C:/Users/sapna/Downloads")
+df <-  read.csv("Counts_of_Deaths.csv")
+head(df)
+
+```
+Let's check if any NA value present in data set
+
+```{r}
+colSums(is.na(df))
+```
+Let's have a look at column names
+```{r}
+names(df)
+```
+Let's drop columns "flag_allcause" and "flag_natcause" contains NA values.
+columns [23:35] are empty columns which I will drop for further analysis. 
+Let' consider important columns for analysis using subset function
+```{r}
+df <- subset(df,select= c(2:20))
+```
+let's clean the columns using janitor's clean_names function
+```{r}
+names(clean_names(df))
+```
+Let's rename all the columns as most names of columns are too lengthy
+```{r}
+names(df) <- c("Jurisdiction", "Year", "Week", "Week_EDT","all_cause", "natural_cause",
+               "septicemia","malignant_neoplasms","diabetes_mellitus","alzheimer_disease","influenza_and_pneumonia",
+               "chronic_respiratory","other_respiratory", "nephritis_nephrotic","lab_findings","heart_disease",
+               "cerebrovascular_diseases","covid_19_MCD", "covid_19_UCD")
+names(df)
+```
+Let's consider data from year 2020-2022 as 2023 not all week's data present and also in Jurisdiction column United States contains  summarize data which is of no use so will drop it and 2 columns all_cause & natural_cause contains total of all columns which I'll drop for further analysis
+```{r}
+df_sub <- df %>% filter(df$Year< 2023 & df$Jurisdiction!='United States') %>% select(-all_cause, -natural_cause)
+names(df_sub)
+```
+Let's fill NA values with 0, indicating that no deaths occurred due to a particular disease.
+
+```{r}
+df_sub[,c(5:17)] <- na.fill(df_sub[, c(5:17)], 0)
+colSums(is.na(df_sub))
+```
+adding Covid related deaths to single column i.e. Multiple cause of death + Underlying cause of death
+
+```{r}
+df_sub$Covid_19 <- df_sub$covid_19_MCD + df_sub$covid_19_UCD
+df_sub <- subset(df_sub, select = -c(covid_19_MCD, covid_19_UCD))
+```
+Let's check data types of columns
+```{r}
+str(df_sub)
+```
+
+Summarize year wise data to get total deaths by each disease
+
+```{r}
+df_yearwise <- df_sub %>%
+  group_by(Year) %>%
+  summarise(
+    across(septicemia:Covid_19, sum)
+  )
+```
+
+Creating dataframes for 3-years 2020, 2021, 2022
+```{r}
+df_yearwise
+```
+
+Let's write a function to analyze and visualize total deaths by Disease every year
+
+```{r}
+plot_disease_deaths <- function(df, year){
+  df <- df %>% pivot_longer(cols= -Year, names_to = "Disease", values_to = "Deaths") %>% 
+    arrange(desc(Deaths)) %>% 
+    mutate(Disease = factor(Disease, levels = unique(Disease)))
+  
+  ggplot(df, aes(x= reorder(Disease, -Deaths), y= Deaths/1e6))+
+    geom_bar(stat= "identity", fill= "skyblue") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+          axis.text.y = element_text(size = 12),
+          axis.title = element_text(size = 14),
+          plot.title = element_text(size = 16)) +
+    labs(title = paste("Death by Disease in", year),x = "Disease", y= "Deaths (Millions)" )
+}
+
+```
+
+
+```{r}
+plot_disease_deaths(df_yearwise[1,], 2020)
+```
+
+
+```{r}
+plot_disease_deaths(df_yearwise[2,], 2021)
+```
+
+
+```{r}
+plot_disease_deaths(df_yearwise[3,], 2022)
+```
+Let's see what all values are there in Jurisdiction
+
+```{r}
+unique(df_sub$Jurisdiction)
+#names(df_sub)
+```
+Let's write a function to analyze total deaths year wise for all specified diseases for top 10 states
+
+```{r}
+plot_state_deaths <- function(df,year){
+  main_df <- df %>% filter(Year==year) %>% group_by(Jurisdiction) %>% 
+    summarise(deaths= sum(c(septicemia,malignant_neoplasms,diabetes_mellitus,
+                            alzheimer_disease,influenza_and_pneumonia,
+                            chronic_respiratory,other_respiratory,
+                            nephritis_nephrotic,lab_findings,heart_disease,
+                            cerebrovascular_diseases,cerebrovascular_diseases))) %>% 
+    arrange(desc(deaths))  
+  
+  ggplot(main_df %>% head(10), aes(x = reorder(Jurisdiction, -deaths), y = deaths))+
+  scale_y_continuous(labels = scales::comma)+
+  geom_bar(stat= "identity", fill= "pink") +
+  geom_hline(yintercept = mean(main_df$deaths), linetype = "dashed", color = "blue",show.legend = TRUE) +  
+  geom_text(aes(x = Inf, y = mean(main_df$deaths), 
+                label = paste("Average:", round(mean(main_df$deaths), 0))), vjust = -1, hjust = 1, color = "blue") +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        plot.title = element_text(size = 16)) +
+  labs(title = paste("Top 10 Jurisdiction by total deaths", (year)),x = "Jurisdiction", y= "Deaths" )
+}
+
+```
+Year 2020
+```{r}
+plot_state_deaths(df_sub, 2020)
+```
+Year 2021
+```{r}
+plot_state_deaths(df_sub, 2021)
+```
+Year 2022
+```{r}
+plot_state_deaths(df_sub, 2022)
+```
+Since Now I found California, Florida, Texas and Pennsylvania has most of the death happened, let's see trends of death week wise for Covid-19, heart disease and Malingnant neoplasms which caused the most deaths among all the diseases
+
+```{r}
+trends_top_states_disease <- function(df, year, jurisdiction){
+  
+df_op <- df %>% filter(Year==year & Jurisdiction==jurisdiction) %>% select(c(Jurisdiction, Year, Week, Covid_19, heart_disease, malignant_neoplasms))
+
+ggplot(df_op, aes(x = Week)) +
+  geom_line(aes(y = Covid_19, color = "Covid_19"), linewidth = 1) +
+  geom_line(aes(y = heart_disease, color = "Heart Disease"), linewidth = 1) +
+  geom_line(aes(y = malignant_neoplasms, color = "Malignant Neoplasms"), linewidth = 1) +
+  scale_color_manual(values = c("Covid_19" = "blue", "Heart Disease" = "red", "Malignant Neoplasms" = "green")) +
+  theme_minimal() +
+  labs(title = paste("Weekly Trends of Diseases",jurisdiction,  (year)),
+       x = "Week",
+       y = "Number of Cases",
+       color = "Disease") +
+  theme(legend.position = "right",
+        legend.text = element_text(size = 12),
+      legend.title = element_text(size = 13), 
+        axis.text.x = element_text(size = 13),
+        axis.text.y = element_text(size = 13),
+        axis.title.x = element_text(size = 13),
+        axis.title.y = element_text(size = 13),
+        plot.title = element_text(size = 15)) +
+  theme(text = element_text(size = 13)) +
+  scale_x_continuous(expand = c(0, 0))
+}
+```
+
+For the year 2020
+```{r fig.height=10, fig.width=15}
+calf_20 <- trends_top_states_disease(df_sub, 2020,"California")
+flor_20 <- trends_top_states_disease(df_sub, 2020,"Florida")
+texas_20 <- trends_top_states_disease(df_sub, 2020,"Texas")
+penn_20 <- trends_top_states_disease(df_sub, 2020, "Pennsylvania")
+grid.arrange(calf_20, flor_20,texas_20,penn_20, ncol =2)
+```
+
+For the year 2021
+```{r fig.height=10, fig.width=15}
+calf_21 <- trends_top_states_disease(df_sub, 2021,"California")
+flor_21 <- trends_top_states_disease(df_sub, 2021,"Florida")
+texas_21 <- trends_top_states_disease(df_sub, 2021,"Texas")
+penn_21 <- trends_top_states_disease(df_sub, 2021, "Pennsylvania")
+grid.arrange(calf_21, flor_21,texas_21,penn_21, ncol =2)
+```
+
+For the year 2022
+```{r fig.height=10, fig.width=15}
+calf_22 <- trends_top_states_disease(df_sub, 2022,"California")
+flor_22 <- trends_top_states_disease(df_sub, 2022,"Florida")
+texas_22 <- trends_top_states_disease(df_sub, 2022,"Texas")
+penn_22 <- trends_top_states_disease(df_sub, 2022, "Pennsylvania")
+grid.arrange(calf_22, flor_22,texas_22,penn_22, ncol =2)
+```
+Let's see Bottom 10 Jurisdiction by total deaths year wise
+
+```{r}
+low_deaths_df <- df_sub %>%
+    filter(Year %in% c(2020, 2021, 2022)) %>%
+    group_by(Year,Jurisdiction) %>%
+    summarise(deaths = sum(c(septicemia, malignant_neoplasms, diabetes_mellitus,
+                             alzheimer_disease, influenza_and_pneumonia,
+                             chronic_respiratory, other_respiratory,
+                             nephritis_nephrotic, lab_findings, heart_disease,
+                             cerebrovascular_diseases, cerebrovascular_diseases))) %>%
+    arrange(Year,deaths) %>% 
+    slice(1:10)
+```
+
+
+```{r}
+ggplot(low_deaths_df, aes(x = Jurisdiction, y = deaths, fill = as.factor(Year))) +
+    geom_bar(stat = "identity") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+          axis.text.y = element_text(size = 12),
+          axis.title = element_text(size = 14),
+          plot.title = element_text(size = 16)) +
+    labs(title = "Lower Total Deaths Counts by Jurisdiction (2020, 2021, 2022)",
+         x = "Jurisdiction", y = "Total Deaths",
+         fill = "Year") +
+    scale_fill_manual(values = c("2020" = "orange", "2021" = "violet", "2022" = "blue")) +
+    guides(fill = guide_legend(title = "Year"))
+```
+
+
+
+
+
